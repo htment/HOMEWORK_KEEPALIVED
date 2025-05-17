@@ -1,0 +1,69 @@
+---
+- hosts: all
+  become: true
+  vars:
+    config_path: "/etc/keepalived/keepalived.conf"
+    script_path: "/usr/local/bin/check_web_server.sh"
+
+  tasks:
+    # 1. Установка keepalived
+    - name: Установка keepalived
+      apt:
+        name: keepalived
+        update_cache: yes
+        state: present
+      when: ansible_pkg_mgr == 'apt'
+      tags: install
+
+    # 2. Копирование скрипта проверки
+    - name: Копирование скрипта проверки
+      copy:
+        src: "check_web_server.sh"
+        dest: "{{ script_path }}"
+        owner: root
+        group: root
+        mode: '0755'
+      tags: script
+
+    # 3. Копирование конфига для MASTER
+    - name: Копирование конфига MASTER
+      copy:
+        src: "keepalived-simple_MASTER.conf"
+        dest: "{{ config_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname in groups['MASTER']
+      tags: config
+
+    # 4. Копирование конфига для BACKUP
+    - name: Копирование конфига BACKUP
+      copy:
+        src: "keepalived-simple_BACKUP.conf"
+        dest: "{{ config_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname in groups['BACKUP']
+      tags: config
+
+    # 5. Проверка конфигурации
+    - name: Проверка конфигурации
+      command: keepalived -t -f "{{ config_path }}"
+      changed_when: false
+      tags: validate
+
+    # 6. Запуск службы
+    - name: Запуск и включение keepalived
+      service:
+        name: keepalived
+        state: restarted
+        enabled: yes
+      tags: service
+
+  handlers:
+    - name: Перезапуск keepalived
+      service:
+        name: keepalived
+        state: restarted
+      listen: "restart keepalived"

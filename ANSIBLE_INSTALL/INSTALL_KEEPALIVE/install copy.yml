@@ -1,0 +1,82 @@
+---
+- hosts: all  # Применяется ко всем хостам из inventory
+  become: true  # Выполнять с правами root
+  vars:
+    config_path: "/etc/keepalived/keepalived.conf"  # Стандартный путь конфига
+
+  tasks:
+    # 1. Установка keepalived
+    - name: Установка keepalived (для систем на apt)
+      apt:
+        name: keepalived
+        update_cache: yes  # Обновить кэш пакетов перед установкой
+        state: present
+      when: ansible_pkg_mgr == 'apt'  # Только для Debian/Ubuntu
+      tags: install
+
+    # 2. Копирование соответствующего конфигурационного файла
+    - name: Копирование конфига keepalived для MASTER
+      copy:
+        src: ./keepalived-simple_MASTER.conf
+        dest: "{{ config_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname in groups['MASTER']
+      tags: config
+
+    #  Создание скрипта проверки веб-сервера
+    - name: Создание скрипта проверки
+      copy:
+        dest: "/usr/local/bin/check_web_server.sh"
+        src: ./check_web_server.sh
+        owner: root
+        group: root
+        mode: '0755'
+      tags: script
+
+    - name: Копирование конфига keepalived для BACKUP
+      copy:
+        src: ./keepalived-simple_BACKUP.conf
+        dest: "{{ config_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname in groups['BACKUP']
+      tags: config
+
+    # 3. Проверка корректности конфигурации
+    - name: Проверка конфигурации keepalived
+      command: keepalived -t -f "{{ config_path }}"
+      changed_when: false  # Не считать это изменение системы
+      tags: validate
+
+    # 4. Включение и запуск службы
+    - name: Запуск и включение автозагрузки keepalived
+      service:
+        name: keepalived
+        state: restarted  # Перезапуск чтобы применить новую конфигурацию
+        enabled: yes  # Включить автозагрузку
+      tags: service
+
+    # 5. Проверка статуса службы
+    - name: Проверка статуса keepalived
+      command: systemctl status keepalived
+      register: keepalived_status  # Записать вывод в переменную
+      changed_when: false
+      ignore_errors: yes  # Продолжать даже если статус не нулевой
+      tags: status
+
+    # 6. Вывод информации о статусе (для отладки)
+    - name: Вывод статуса keepalived
+      debug:
+        msg: "{{ keepalived_status.stdout_lines }}"  # Вывод построчно
+      when: keepalived_status is defined
+
+  # Обработчики (выполняются только при изменении)
+  handlers:
+    - name: Перезапуск keepalived
+      service:
+        name: keepalived
+        state: restarted
+      listen: "restart keepalived"  # Может быть вызван из других задач
